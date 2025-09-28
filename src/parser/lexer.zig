@@ -141,7 +141,7 @@ pub const Lexer = struct {
         }
     }
 
-    fn readString(self: *Lexer) !Token {
+    fn readString(self: *Lexer) !?Token {
         const start = self.pos;
         self.advance(1); // Skip opening quote
 
@@ -161,7 +161,7 @@ pub const Lexer = struct {
         return error.UnterminatedString;
     }
 
-    fn readDefinition(self: *Lexer) !Token {
+    fn readDefinition(self: *Lexer) !?Token {
         const start = self.pos;
         self.advance(1); // Skip opening brace
 
@@ -181,7 +181,7 @@ pub const Lexer = struct {
         return error.UnterminatedAction;
     }
 
-    fn readAction(self: *Lexer) !Token {
+    fn readAction(self: *Lexer) !?Token {
         const start = self.pos;
         self.advance(1); // Skip opening brace
         var brace_count: usize = 1;
