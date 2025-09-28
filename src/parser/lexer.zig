@@ -3,40 +3,8 @@ const std = @import("std");
 pub const TokenType = enum {
     Name,           // Identifier
     Definition,     // {name}
-    String,         /    pub fn readString(self: *Lexer)     pub fn readDefinition(self: *Lexer) !?Token {
-        const start = self.pos;
-        self.advance(1); // Skip opening brace
-
-        while (self.pos < self.source.len) {
-            const c = self.source[self.pos];
-            if (c == '}') {
-                self.advance(1);
-                return Token{
-                    .type = .Definition,
-                    .value = self.source[start..self.pos],
-                    .line = self.line,
-                    .column = self.column - (self.pos - start),
-                };
-            }
-            self.advance(1);
-        }
-        return error.UnterminatedAction;const start = self.pos;
-        self.advance(1); // Skip opening quote
-
-        while (self.pos < self.source.len) {
-            const c = self.source[self.pos];
-            if (c == '"' and self.source[self.pos - 1] != '\\') {
-                self.advance(1);
-                return Token{
-                    .type = .String,
-                    .value = self.source[start..self.pos],
-                    .line = self.line,
-                    .column = self.column - (self.pos - start),
-                };
-            }
-            self.advance(1);
-        }
-        return error.UnterminatedString;gex,         // Regular expression
+    String,         // String literal
+    Regex,          // Regular expression
     Action,        // C code block
     Pipe,          // |
     Newline,       // \n
@@ -273,10 +241,70 @@ pub const Lexer = struct {
         }
         return null;
     }
+
+    fn readName(self: *Lexer) !?Token {
+        const start = self.pos;
+        
+        // Read identifier characters
+        while (self.pos < self.source.len) {
+            const c = self.source[self.pos];
+            if (!isNameChar(c)) break;
+            self.advance(1);
+        }
+        
+        if (self.pos > start) {
+            return Token{
+                .type = .Name,
+                .value = self.source[start..self.pos],
+                .line = self.line,
+                .column = self.column - (self.pos - start),
+            };
+        }
+        return null;
+    }
+
+    fn readLineComment(self: *Lexer) !?Token {
+        const start = self.pos;
+        self.advance(2); // Skip //
+        
+        while (self.pos < self.source.len and self.source[self.pos] != '\n') {
+            self.advance(1);
+        }
+        
+        return Token{
+            .type = .Comment,
+            .value = self.source[start..self.pos],
+            .line = self.line,
+            .column = self.column - (self.pos - start),
+        };
+    }
+
+    fn readBlockComment(self: *Lexer) !?Token {
+        const start = self.pos;
+        self.advance(2); // Skip /*
+        
+        while (self.pos + 1 < self.source.len) {
+            if (self.source[self.pos] == '*' and self.source[self.pos + 1] == '/') {
+                self.advance(2);
+                return Token{
+                    .type = .Comment,
+                    .value = self.source[start..self.pos],
+                    .line = self.line,
+                    .column = self.column - (self.pos - start),
+                };
+            }
+            self.advance(1);
+        }
+        return error.UnterminatedComment;
+    }
 };
 
 fn isNameStart(c: u8) bool {
     return (c >= 'a' and c <= 'z') or
            (c >= 'A' and c <= 'Z') or
            c == '_';
+}
+
+fn isNameChar(c: u8) bool {
+    return isNameStart(c) or (c >= '0' and c <= '9');
 }
