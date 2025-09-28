@@ -129,6 +129,18 @@ pub const DFA = struct {
 
         return dfa;
     }
+
+    /// Minimizes the DFA using the Hopcroft algorithm
+    pub fn minimize(self: *DFA) !void {
+        var minimizer = @import("minimize.zig").DFAMinimizer.init(self.allocator, self);
+        defer minimizer.deinit();
+        
+        const minimized = try minimizer.minimize();
+        
+        // Replace self with minimized version
+        self.deinit();
+        self.* = minimized;
+    }
 };
 
 fn epsilonClosure(nfa: *const NFA, state: usize, result: *std.StaticBitSet(256)) !void {
@@ -154,7 +166,8 @@ fn isAccepting(nfa: *const NFA, states: *const std.StaticBitSet(256)) bool {
 
 fn hashStateSet(states: *const std.StaticBitSet(256)) u64 {
     var hasher = std.hash.Wyhash.init(0);
-    const bytes = std.mem.sliceAsBytes(states.masks());
+    const masks = states.masks;
+    const bytes = std.mem.sliceAsBytes(&masks);
     hasher.update(bytes);
     return hasher.final();
 }

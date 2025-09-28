@@ -201,4 +201,113 @@ pub const NFA = struct {
         self.states.items[new_start].is_accepting = true;
         self.start = new_start;
     }
+
+    /// Creates an NFA from a regex pattern
+    pub fn fromPattern(allocator: std.mem.Allocator, pattern: []const u8) !NFA {
+        var nfa = NFA.init(allocator);
+        errdefer nfa.deinit();
+
+        // For now, implement a simple pattern parser
+        // This is a basic implementation that handles simple patterns
+        if (pattern.len == 0) {
+            return nfa;
+        }
+
+        // Start with an empty NFA and build it up
+        const start = try nfa.addState();
+        nfa.start = start;
+
+        var i: usize = 0;
+        while (i < pattern.len) {
+            const c = pattern[i];
+            
+            if (c == '\\' and i + 1 < pattern.len) {
+                // Handle escape sequences
+                i += 1;
+                const escaped = pattern[i];
+                const next_state = try nfa.addState();
+                try nfa.addTransition(nfa.states.items.len - 1, escaped, next_state);
+                i += 1;
+            } else if (c == '*' and nfa.states.items.len > 1) {
+                // Kleene star - make the last transition optional and repeatable
+                const last_state = nfa.states.items.len - 1;
+                try nfa.addTransition(last_state, EPSILON, nfa.start);
+                i += 1;
+            } else if (c == '+' and nfa.states.items.len > 1) {
+                // Plus - make the last transition repeatable
+                const last_state = nfa.states.items.len - 1;
+                try nfa.addTransition(last_state, EPSILON, nfa.start);
+                i += 1;
+            } else if (c == '?' and nfa.states.items.len > 1) {
+                // Optional - make the last transition optional
+                const last_state = nfa.states.items.len - 1;
+                try nfa.addTransition(nfa.start, EPSILON, last_state);
+                i += 1;
+            } else if (c == '|') {
+                // Union - this is more complex, for now just treat as literal
+                const next_state = try nfa.addState();
+                try nfa.addTransition(nfa.states.items.len - 1, c, next_state);
+                i += 1;
+            } else {
+                // Regular character
+                const next_state = try nfa.addState();
+                try nfa.addTransition(nfa.states.items.len - 1, c, next_state);
+                i += 1;
+            }
+        }
+
+        // Make the last state accepting
+        if (nfa.states.items.len > 0) {
+            nfa.states.items[nfa.states.items.len - 1].is_accepting = true;
+        }
+
+        return nfa;
+    }
+
+    /// Creates a clone of the NFA
+    pub fn clone(self: *NFA) !NFA {
+        var new_nfa = NFA.init(self.allocator);
+        errdefer new_nfa.deinit();
+
+        // Copy all states
+        for (self.states.items) |state| {
+            const new_state_idx = try new_nfa.addState();
+            new_nfa.states.items[new_state_idx].is_accepting = state.is_accepting;
+            new_nfa.states.items[new_state_idx].action = state.action;
+        }
+
+        // Copy all transitions
+        for (self.states.items, 0..) |state, i| {
+            var it = state.transitions.iterator();
+            while (it.next()) |entry| {
+                const input = entry.key_ptr.*;
+                for (entry.value_ptr.*.items) |target| {
+                    try new_nfa.addTransition(i, input, target);
+                }
+            }
+        }
+
+        new_nfa.start = self.start;
+        return new_nfa;
+    }
+
+    /// Creates Kleene star closure of the NFA (matches zero or more repetitions)
+    pub fn star(self: *NFA) !void {
+        const old_start = self.start;
+        const new_start = try self.addState();
+
+        // Add epsilon transition from new start to old start
+        try self.addTransition(new_start, EPSILON, old_start);
+        
+        // Add epsilon transitions from accepting states back to old start
+        for (self.states.items, 0..) |state, i| {
+            if (state.is_accepting) {
+                try self.addTransition(i, EPSILON, old_start);
+            }
+        }
+
+        // Make new start accepting
+        self.states.items[new_start].is_accepting = true;
+        self.start = new_start;
+    }
 };

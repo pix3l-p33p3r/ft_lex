@@ -5,7 +5,7 @@ const NFA = @import("automata/nfa.zig").NFA;
 const DFA = @import("automata/dfa.zig").DFA;
 
 fn buildDFA(allocator: std.mem.Allocator, rules: []const parser.Rule) !DFA {
-    var nfa = try NFA.init(allocator);
+    var nfa = NFA.init(allocator);
     defer nfa.deinit();
 
     // Build NFA for each rule
@@ -40,7 +40,7 @@ pub fn main() !void {
     defer lexfile.deinit();
 
     // Build DFA from rules
-    var dfa = try buildDFA(allocator, lexfile.rules);
+    var dfa = try buildDFA(allocator, lexfile.rules.items);
     defer dfa.deinit();
 
     // Generate C code
