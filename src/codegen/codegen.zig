@@ -84,9 +84,9 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
     );
 
     // Generate transition table
-    for (transitions.table, 0..) |row, i| {
+    for (transitions.table) |row| {
         try writer.writeAll("    {");
-        for (transitions.symbols, 0..) |symbol, j| {
+        for (transitions.symbols, 0..) |_, j| {
             if (row[j]) |target| {
                 try writer.print("{d}", .{target});
             } else {
