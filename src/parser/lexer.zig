@@ -3,8 +3,40 @@ const std = @import("std");
 pub const TokenType = enum {
     Name,           // Identifier
     Definition,     // {name}
-    String,         // "literal"
-    Regex,         // Regular expression
+    String,         /    pub fn readString(self: *Lexer)     pub fn readDefinition(self: *Lexer) !?Token {
+        const start = self.pos;
+        self.advance(1); // Skip opening brace
+
+        while (self.pos < self.source.len) {
+            const c = self.source[self.pos];
+            if (c == '}') {
+                self.advance(1);
+                return Token{
+                    .type = .Definition,
+                    .value = self.source[start..self.pos],
+                    .line = self.line,
+                    .column = self.column - (self.pos - start),
+                };
+            }
+            self.advance(1);
+        }
+        return error.UnterminatedAction;const start = self.pos;
+        self.advance(1); // Skip opening quote
+
+        while (self.pos < self.source.len) {
+            const c = self.source[self.pos];
+            if (c == '"' and self.source[self.pos - 1] != '\\') {
+                self.advance(1);
+                return Token{
+                    .type = .String,
+                    .value = self.source[start..self.pos],
+                    .line = self.line,
+                    .column = self.column - (self.pos - start),
+                };
+            }
+            self.advance(1);
+        }
+        return error.UnterminatedString;gex,         // Regular expression
     Action,        // C code block
     Pipe,          // |
     Newline,       // \n
@@ -68,12 +100,12 @@ pub const Lexer = struct {
                     return token;
                 }
             },
-            '"' => return self.readString(),
+            '"' => return (try self.readString()) orelse null,
             '{' => {
                 if (self.inDefinitionSection) {
-                    return self.readDefinition();
+                    return (try self.readDefinition()) orelse null;
                 } else {
-                    return self.readAction();
+                    return (try self.readAction()) orelse null;
                 }
             },
             '/' => {
@@ -102,12 +134,11 @@ pub const Lexer = struct {
                 self.column = 1;
                 return token;
             },
-            '{' => return self.readAction(),
             else => {
                 if (isNameStart(c)) {
-                    return self.readName();
+                    return (try self.readName()) orelse null;
                 } else {
-                    return self.readRegex();
+                    return (try self.readRegex()) orelse null;
                 }
             },
         }
@@ -208,7 +239,7 @@ pub const Lexer = struct {
         return error.UnterminatedAction;
     }
 
-    fn readRegex(self: *Lexer) !Token {
+    fn readRegex(self: *Lexer) !?Token {
         const start = self.pos;
         var in_char_class = false;
 
@@ -230,12 +261,17 @@ pub const Lexer = struct {
             }
             self.advance(1);
         }
-        return Token{
-            .type = .Regex,
-            .value = self.source[start..self.pos],
-            .line = self.line,
-            .column = self.column - (self.pos - start),
-        };
+        
+        // End of file reached
+        if (self.pos > start) {
+            return Token{
+                .type = .Regex,
+                .value = self.source[start..self.pos],
+                .line = self.line,
+                .column = self.column - (self.pos - start),
+            };
+        }
+        return null;
     }
 };
 

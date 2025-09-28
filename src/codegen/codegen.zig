@@ -68,6 +68,10 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
 
     const writer = file.writer();
 
+    // Initialize transition table
+    var transitions = try TransitionTable.init(allocator, dfa);
+    defer transitions.deinit();
+
     // Generate headers and includes
     try writer.writeAll(
         \\#include <stdio.h>
@@ -76,14 +80,10 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
         \\#include "libl.h"
         \\
         \\/* Transition table and state information */
-        \\
+        \\static const int yy_transitions[][256] = {
     );
 
     // Generate transition table
-    var transitions = try TransitionTable.init(allocator, dfa);
-    defer transitions.deinit();
-
-    try writer.writeAll("static const int yy_transitions[][256] = {\n");
     for (transitions.table, 0..) |row, i| {
         try writer.writeAll("    {");
         for (transitions.symbols, 0..) |symbol, j| {
@@ -100,16 +100,6 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
     }
     try writer.writeAll("};\n\n");
 
-    // Generate accepting states array
-    try writer.writeAll("static const int yy_accepting[] = {\n    ");
-    for (dfa.states.items, 0..) |state, i| {
-        try writer.print("{d}", .{@intFromBool(state.is_accepting)});
-        if (i < dfa.states.items.len - 1) {
-            try writer.writeAll(", ");
-        }
-    }
-    try writer.writeAll("\n};\n\n");
-
     // Generate symbol table
     try writer.writeAll("static const int yy_symbols[] = {\n    ");
     for (transitions.symbols, 0..) |symbol, i| {
@@ -120,27 +110,24 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
     }
     try writer.writeAll("\n};\n\n");
 
+    // Generate accepting states
+    try writer.writeAll("static const int yy_accepting[] = {\n    ");
+    for (dfa.states.items, 0..) |state, i| {
+        try writer.print("{d}", .{@intFromBool(state.is_accepting)});
+        if (i < dfa.states.items.len - 1) {
+            try writer.writeAll(", ");
+        }
+    }
+    try writer.writeAll("\n};\n\n");
+
     // Generate buffer management code
     try writer.writeAll(
-        \\/* Input buffering */
+        \\/* Buffer management */
         \\static char yy_buffer[YY_BUF_SIZE];
         \\static int yy_buffer_start = 0;
         \\static int yy_buffer_end = 0;
         \\static int yy_buffer_pos = 0;
         \\
-        \\/* Current lexer state */
-        \\static int yy_current_state = 0;
-        \\static int yy_last_accepting_state = -1;
-        \\static int yy_last_accepting_pos = -1;
-        \\
-        \\/* Global variables */
-        \\FILE *yyin = NULL;
-        \\FILE *yyout = NULL;
-        \\char *yytext = NULL;
-        \\int yyleng = 0;
-        \\int yylineno = 1;
-        \\
-        \\/* Buffer management functions */
         \\static int yy_get_next_char(void) {
         \\    if (yy_buffer_pos >= yy_buffer_end) {
         \\        yy_buffer_end = fread(yy_buffer, 1, YY_BUF_SIZE, yyin);
@@ -162,17 +149,20 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
         \\
         \\    while ((c = yy_get_next_char()) != EOF) {
         \\        int next_state = -1;
+        \\
         \\        // Check transition for the current character
-        \\        for (int i = 0; i < sizeof(yy_transitions[current_state]) / sizeof(int); i++) {
+        \\        for (int i = 0; i < sizeof(yy_symbols)/sizeof(int); i++) {
         \\            if (yy_symbols[i] == c) {
         \\                next_state = yy_transitions[current_state][i];
         \\                break;
         \\            }
         \\        }
-        }
+        \\
+    );
 
-        if (next_state == -1) {
-            // No valid transition found
+    // Generate state transition code
+    try writer.writeAll(
+        \\        if (next_state == -1) {
         \\            if (last_accepting_state == -1) {
         \\                fprintf(stderr, "Invalid token\n");
         \\                return -1;
@@ -187,17 +177,23 @@ pub fn generateCode(allocator: std.mem.Allocator, lexfile: parser.LexFile, dfa: 
         \\            memcpy(yytext, yy_buffer + yy_buffer_start, yyleng);
         \\            yytext[yyleng] = '\0';
         \\
-        \\            // Execute action
+        \\            // Execute action based on accepting state
         \\            switch (last_accepting_state) {
-        \\                // Generate cases for each accepting state
-        \\                inline for (lexfile.rules.items, 0..) |rule, i| {
-        \\                    try writer.print("                case {d}: {{\n", .{i});
-        \\                    try writer.print("                    {s}\n", .{rule.action});
-        \\                    try writer.writeAll("                    break;\n                }\n");
-        \\                }
-        \\                try writer.writeAll("                default:\n");
-        \\                try writer.writeAll("                    fprintf(stderr, \"No action for accepting state %d\\n\", last_accepting_state);\n");
-        \\                try writer.writeAll("                    return -1;\n");
+    );
+
+    // Generate actions for each accepting state
+    for (lexfile.rules.items, 0..) |rule, i| {
+        try writer.print(
+            \\                case {d}: {{
+            \\                    {s}
+            \\                    break;
+            \\                }}
+            \\
+        , .{ i, rule.action });
+    }
+
+    // Close the switch and yylex function
+    try writer.writeAll(
         \\            }
         \\            
         \\            free(yytext);
