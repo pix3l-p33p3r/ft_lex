@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  ft_lex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    environment:
+      - TERM=xterm-256color
+    command: /bin/bash
+    stdin_open: true
+    tty: true
