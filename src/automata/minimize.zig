@@ -22,7 +22,7 @@ pub const MinimizedDFA = struct {
 const StateSet = std.StaticBitSet(256);
 const PartitionId = usize;
 
-const DFAMinimizer = struct {
+pub const DFAMinimizer = struct {
     allocator: std.mem.Allocator,
     input_dfa: *const DFA,
     partitions: std.ArrayList(StateSet),
