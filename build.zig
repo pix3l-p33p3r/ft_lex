@@ -1,79 +1,43 @@
 const std = @import("std");
-const Compile = std.Build.Step.Compile;
-const LazyPath = std.Build.LazyPath;
-const GeneratedFile = std.Build.GeneratedFile;
-
-const liblPath: []const u8 = "src/libl/libl.a";
-
-fn fileExist(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
-    return true;
-}
-
-fn ensureLiblIsBuilt(self: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
-    _ = self; _ = options;
-    if (!fileExist(liblPath)) {
-        std.log.info("usage: zig build libl", .{});
-        @panic("You must build the libl before running tests");
-    }
-}
-
-fn buildLibl(self: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
-    _ = self; _ = options;
-
-    var child = std.process.Child.init(&[_][]const u8{
-        "make", "-C", "src/libl",
-    }, std.heap.page_allocator);
-
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Ignore;
-    child.stderr_behavior = .Ignore;
-
-    const term = try child.spawnAndWait();
-    std.debug.assert(term.Exited == 0);
-}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe_mod = b.createModule(.{
+    const exe = b.addExecutable(.{
+        .name = "ft_lex",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-
-    const exe = b.addExecutable(.{
-        .name = "ft_lex",
-        .root_module = exe_mod,
-    });
-    exe.linkLibC();
-
     b.installArtifact(exe);
-    
+
+    const libl = b.addStaticLibrary(.{
+        .name = "l",
+        .target = target,
+        .optimize = optimize,
+    });
+    libl.addCSourceFile(.{ .file = b.path("libl/libl.c"), .flags = &.{ "-std=c99" } });
+    libl.linkLibC();
+    b.installArtifact(libl);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-
-    const run_step = b.step("run", "Run the app");
+    if (b.args) |args| run_cmd.addArgs(args);
+    const run_step = b.step("run", "Run ft_lex");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_unit_tests = b.addTest(.{
-        .root_module = exe_mod,
+    const unit = b.addTest(.{
+        .root_source_file = b.path("src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
     });
+    const run_unit = b.addRunArtifact(unit);
 
-    const libl_step = b.step("libl", "Build libl static library");
-    libl_step.makeFn = buildLibl;
+    const check = b.addSystemCommand(&.{ "sh", "scripts/check.sh" });
+    check.step.dependOn(b.getInstallStep());
 
-    const ensure_libl_is_built = b.addRunArtifact(exe_unit_tests);
-    ensure_libl_is_built.step.makeFn = ensureLiblIsBuilt;
-
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&ensure_libl_is_built.step);
-    test_step.dependOn(&run_exe_unit_tests.step);
+    const test_step = b.step("test", "Run unit and integration tests");
+    test_step.dependOn(&run_unit.step);
+    test_step.dependOn(&check.step);
 }
-

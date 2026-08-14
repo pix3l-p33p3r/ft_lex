@@ -1,231 +1,186 @@
-const std                = @import("std");
-const stdin              = std.io.getStdIn();
-const print              = std.debug.print;
-const log                = std.log;
-const Allocator          = std.mem.Allocator;
-const ArrayList          = std.ArrayList;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const std = @import("std");
+const diag = @import("diag.zig");
+const lexfile = @import("lexfile.zig");
+const nfa_mod = @import("nfa.zig");
+const dfa_mod = @import("dfa.zig");
+const emit = @import("emit.zig");
+const emit_zig = @import("emit_zig.zig");
 
-const TokenizerModule    = @import("regex/Tokenizer.zig");
-const Tokenizer          = TokenizerModule.Tokenizer;
-const Token              = TokenizerModule.Token;
-
-const ParserModule       = @import("regex/Parser.zig");
-const RegexParser        = ParserModule.Parser;
-const RegexNode          = ParserModule.RegexNode;
-
-const NFAModule          = @import("regex/NFA.zig");
-const NFA                = NFAModule.NFA;
-
-const DFAModule          = @import("regex/DFA.zig");
-const DFADump            = @import("regex/DFA_Dump.zig");
-const DFA                = DFAModule.DFA;
-
-const Graph              = @import("regex/Graph.zig");
-const EC                 = @import("regex/EquivalenceClasses.zig");
-const LexParser          = @import("lex/Parser.zig");
-
-const Printer            = @import("lex/Printer/Printer.zig");
-const G                  = @import("globals.zig");
-
-comptime {
-    _ = @import("test/regex/Tokenizer.zig");
-    _ = @import("test/regex/Parser.zig");
-    _ = @import("test/regex/NFAs.zig");
-    _ = @import("test/lex/Compression.zig");
-    _ = @import("test/lex/Comparison.zig");
-}
-
-const   BUF_SIZE: usize = 4096;
-
-fn printHelp() void {
-    const usage =
-    \\Usage: ft_lex [OPTIONS] [FILE]
-    \\Generates programs that perform pattern-matching on text.
-    \\
-    \\Options:
-    \\  -f => generate a fast version of the scanner. (default is compressed)
-    \\  -z => scanner is generated in Zig. (default is C)
-    \\  -t => outputs scanner on stdout. (default is ft_lex.yy.(c|zig))
-    \\  -n => don't print statistics. (default behavior)
-    \\  -v => print statistics. (off by default)
-    \\  -g => outputs graphs to visualize the generate NFAs/DFAs.
-    \\
-    \\
-    ;
-    std.debug.print(usage, .{});
-
-}
-
-fn parseOptions(args: [][:0]u8) !usize {
-    if (args.len == 1) return 1;
-
-    var arg_it: usize = 1;
-
-    if (std.mem.eql(u8, args[1], "--help")) {
-        printHelp();
-        return error.NeedHelp;
-    }
-
-    for (args[1..]) |arg| {
-        if (arg[0] != '-')
-            break;
-
-        const opt = arg[1..];
-        for (opt) |ch| {
-            switch (ch) {
-                'g' => G.options.graph = true,
-                't' => G.options.t = true,
-                'n' => G.options.n = true,
-                'v' => G.options.v = true,
-                'z' => G.options.zig = true,
-                'f' => G.options.fast = true,
-                else => {
-                    print("ft_lex: Unrecognized option `{s}'\n", .{opt});
-                    return error.UnrecognizedOption;
-                }
-            }
-        }
-        arg_it += 1;
-    }
-    return arg_it;
-}
-
-const DebugAllocatorOptions: std.heap.DebugAllocatorConfig = .{
-    .stack_trace_frames = 15,
-    .retain_metadata = true,
-    // .verbose_log = true,
-    // .thread_safe = true,
+const Options = struct {
+    t: bool = false,
+    n: bool = false,
+    v: bool = false,
+    zig: bool = false,
+    compress: bool = false,
+    files: []const []const u8 = &.{},
 };
 
-fn emitGraphs(
-    alloc: Allocator,
-    lexParser: LexParser,
-    DFAs: ArrayListUnmanaged(DFA.DFA_SC),
-    mergedNFAs: ArrayList(NFAModule.NFABuilder.DFAFragment),
-    finalDfa: DFA,
-    ec: EC
-) !void {
-    std.fs.cwd().makeDir("graphs") catch {};
-
-    for (DFAs.items, mergedNFAs.items, 0..) |dfa, nfa, i| {
-        const filename = try std.fmt.allocPrint(alloc, "graphs/test_{d}.graph", .{i});
-        defer alloc.free(filename);
-
-        const outFile = try std.fs.cwd().createFile(filename, .{});
-        defer outFile.close();
-        Graph.dotFormat(lexParser, nfa.nfa, dfa.dfa, &ec.yy_ec, outFile.writer());
-    }
-
-    const outFile = try std.fs.cwd().createFile("graphs/test_g.graph", .{});
-    defer outFile.close();
-    Graph.dotFormat(lexParser, mergedNFAs.items[0].nfa, finalDfa, &ec.yy_ec, outFile.writer());
+fn usage(w: anytype) !void {
+    try w.writeAll("Usage: ft_lex [-t] [-n|-v] [-z] [-C] [file...]\n");
 }
 
-fn checkDFAsize(finalDfa: DFA) !void {
-    if (G.options.fast) {
-        const uncompressedSize = finalDfa.transTable.?.data.items[0].items.len * finalDfa.transTable.?.data.items.len;
-        if (uncompressedSize >= G.options.maxSizeDFA) {
-            std.log.err("Maximum dfa table entries exceeded: max: {d}, actual: {d}", .{G.options.maxSizeDFA, uncompressedSize});
-            return error.DFASizeExceeded;
+fn parseOptions(alloc: std.mem.Allocator, args: []const []const u8) !Options {
+    var opt = Options{};
+    var files = std.ArrayList([]const u8).init(alloc);
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (a.len == 0) continue;
+        if (std.mem.eql(u8, a, "-")) {
+            try files.append(a);
+            continue;
         }
-    } else {
-        const compressedSize = (finalDfa.cTransTable.?.base.len * 2) + (finalDfa.cTransTable.?.next.len * 2);
-        if (compressedSize >= G.options.maxSizeDFA) {
-            std.log.err("Maximum dfa table entries exceeded: max: {d}, actual: {d}", .{G.options.maxSizeDFA, compressedSize});
-            return error.DFASizeExceeded;
-        }
-    }
-}
-
-fn run(alloc: Allocator, filename: ?[]u8) !u8 {
-    var lexParser = try LexParser.init(alloc, filename);
-    defer lexParser.deinit();
-
-    lexParser.parse() catch { return 1; };
-
-    var regexParser = try RegexParser.init(alloc);
-    defer regexParser.deinit();
-
-    var headList = ArrayList(*RegexNode).init(alloc);
-    defer headList.deinit();
-
-    for (lexParser.rules.items) |rule| {
-        regexParser.loadSlice(rule.regex);
-        const head = regexParser.parse() catch |e| {
-            std.log.err("\"{s}\": {!}", .{rule.regex, e});
-            return 1;
-        };
-        try headList.append(head);
-    }
-
-    const ec = try EC.buildEquivalenceTable(alloc, regexParser.classSet);
-
-    var nfaBuilder = try NFAModule.NFABuilder.init(alloc, &regexParser, &ec.yy_ec);
-    defer nfaBuilder.deinit();
-
-    var nfaList = std.ArrayList(NFA).init(alloc);
-    defer nfaList.deinit();
-
-    for (headList.items) |head| {
-        const nfa = nfaBuilder.astToNfa(head) catch |e| {
-            switch (e) {
-                error.NFATooComplicated => std.log.err("Maximum NFA states exceeded (>= {d})", .{ G.options.maxStates }),
-                else => {},
+        if (a[0] == '-' and a.len > 1) {
+            for (a[1..]) |ch| {
+                switch (ch) {
+                    't' => opt.t = true,
+                    'n' => opt.n = true,
+                    'v' => opt.v = true,
+                    'z' => opt.zig = true,
+                    'C' => opt.compress = true,
+                    else => {
+                        const stderr = std.io.getStdErr().writer();
+                        stderr.print("ft_lex: unrecognized option -- {c}\n", .{ch}) catch {};
+                        usage(stderr) catch {};
+                        return error.Usage;
+                    },
+                }
             }
-            return 1;
-        };
-        try nfaList.append(nfa);
+        } else {
+            try files.append(a);
+            i += 1;
+            while (i < args.len) : (i += 1) try files.append(args[i]);
+            break;
+        }
     }
-
-    const mergedNFAs, const bolMergedNFAs, const tcNFAs = try nfaBuilder.merge(nfaList.items, lexParser);
-    defer {
-        for (mergedNFAs.items) |m| alloc.free(m.acceptList);
-        for (bolMergedNFAs.items) |m| alloc.free(m.acceptList);
-        for (tcNFAs.items) |m| alloc.free(m.acceptList);
-        mergedNFAs.deinit(); bolMergedNFAs.deinit(); tcNFAs.deinit();
-    }
-
-    var finalDfa, var DFAs, var bol_DFAs, var tc_DFAs = 
-    try DFA.buildAndMergeFromNFAs(alloc, &lexParser, mergedNFAs, bolMergedNFAs, tcNFAs, ec);
-
-    defer {
-        for (DFAs.items) |*dfa_sc| dfa_sc.dfa.deinit();
-        for (bol_DFAs.items) |*dfa_sc| dfa_sc.dfa.deinit();
-        for (tc_DFAs.items) |*dfa_sc| dfa_sc.dfa.deinit();
-        DFAs.deinit(alloc); bol_DFAs.deinit(alloc); tc_DFAs.deinit(alloc);
-        finalDfa.mergedDeinit();
-    }
-
-    if (G.options.graph)
-        try emitGraphs(alloc, lexParser, DFAs, mergedNFAs, finalDfa, ec);
-
-    checkDFAsize(finalDfa) catch { return 1; };
-
-    try Printer.print(ec, DFAs, bol_DFAs, tc_DFAs, finalDfa, lexParser);
-
-    return 0;
+    opt.files = try files.toOwnedSlice();
+    return opt;
 }
 
+fn readSources(alloc: std.mem.Allocator, files: []const []const u8) !struct { name: []const u8, src: []u8 } {
+    const stderr = std.io.getStdErr().writer();
+    if (files.len == 0) {
+        const src = std.io.getStdIn().readToEndAlloc(alloc, 16 * 1024 * 1024) catch {
+            try stderr.writeAll("ft_lex: failed to read standard input\n");
+            return error.Io;
+        };
+        return .{ .name = "stdin", .src = src };
+    }
 
-pub fn main() !u8 {
-    var gpa: std.heap.DebugAllocator(DebugAllocatorOptions) = .init;
+    var buf = std.ArrayList(u8).init(alloc);
+    var name: []const u8 = files[0];
+    for (files, 0..) |f, idx| {
+        if (idx > 0) try buf.append('\n');
+        if (std.mem.eql(u8, f, "-")) {
+            std.io.getStdIn().reader().readAllArrayList(&buf, 16 * 1024 * 1024) catch {
+                try stderr.writeAll("ft_lex: failed to read standard input\n");
+                return error.Io;
+            };
+            continue;
+        }
+        const content = std.fs.cwd().readFileAlloc(alloc, f, 16 * 1024 * 1024) catch |e| {
+            try stderr.print("ft_lex: cannot open {s}: {!}\n", .{ f, e });
+            return error.Io;
+        };
+        defer alloc.free(content);
+        try buf.appendSlice(content);
+        if (idx == 0) name = f;
+    }
+    return .{ .name = name, .src = try buf.toOwnedSlice() };
+}
+
+pub fn main() u8 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+    const gpa_alloc = gpa.allocator();
 
-    const args = try std.process.argsAlloc(alloc);
-    defer std.process.argsFree(alloc, args);
+    var arena = std.heap.ArenaAllocator.init(gpa_alloc);
+    defer arena.deinit();
+    const alloc = arena.allocator();
 
-    const arg_it = parseOptions(args) catch |e| switch (e) {
-        error.UnrecognizedOption => { print("Usage: ft_lex [-t] [-n|-v] [file...]\n", .{}); return 1; },
-        error.NeedHelp => return 0,
+    const stderr = std.io.getStdErr().writer();
+
+    const args = std.process.argsAlloc(alloc) catch {
+        stderr.writeAll("ft_lex: out of memory\n") catch {};
+        return 1;
     };
 
-    if (args.len == arg_it) {
-        return try run(alloc, null);
-    } else {
-        G.options.inputName = args[arg_it];
-        return try run(alloc, args[arg_it]);
+    const opt = parseOptions(alloc, args) catch |e| switch (e) {
+        error.Usage => return 1,
+        error.OutOfMemory => {
+            stderr.writeAll("ft_lex: out of memory\n") catch {};
+            return 1;
+        },
+    };
+
+    const input = readSources(alloc, opt.files) catch return 1;
+
+    var d = diag.Diag{ .file = input.name };
+    const spec = lexfile.parse(alloc, &d, input.name, input.src) catch |e| switch (e) {
+        error.CompileFail => {
+            d.write(stderr) catch {};
+            return 1;
+        },
+        error.OutOfMemory => {
+            stderr.writeAll("ft_lex: out of memory\n") catch {};
+            return 1;
+        },
+    };
+
+    const nfa = nfa_mod.build(alloc, &d, &spec) catch |e| switch (e) {
+        error.CompileFail => {
+            d.write(stderr) catch {};
+            return 1;
+        },
+        error.OutOfMemory => {
+            stderr.writeAll("ft_lex: out of memory\n") catch {};
+            return 1;
+        },
+    };
+
+    const dfa = dfa_mod.build(alloc, &d, &nfa, spec.tables.states) catch |e| switch (e) {
+        error.CompileFail => {
+            d.write(stderr) catch {};
+            return 1;
+        },
+        error.OutOfMemory => {
+            stderr.writeAll("ft_lex: out of memory\n") catch {};
+            return 1;
+        },
+    };
+
+    const out_src = if (opt.zig)
+        emit_zig.generate(alloc, &spec, &dfa, opt.compress)
+    else
+        emit.generate(alloc, &spec, &dfa, opt.compress);
+    const c_src = out_src catch {
+        stderr.writeAll("ft_lex: out of memory\n") catch {};
+        return 1;
+    };
+
+    if ((opt.v or spec.tables.specified) and !opt.n) {
+        stderr.print(
+            "ft_lex statistics:\n  {d} rules\n  {d} nfa states\n  {d} dfa states\n",
+            .{ spec.rules.len, nfa.states.items.len, dfa.states.len },
+        ) catch {};
     }
-    unreachable;
+
+    if (opt.t) {
+        std.io.getStdOut().writeAll(c_src) catch {
+            stderr.writeAll("ft_lex: failed to write standard output\n") catch {};
+            return 1;
+        };
+    } else {
+        const out_name: []const u8 = if (opt.zig) "lex.yy.zig" else "lex.yy.c";
+        const file = std.fs.cwd().createFile(out_name, .{}) catch {
+            stderr.print("ft_lex: cannot create {s}\n", .{out_name}) catch {};
+            return 1;
+        };
+        defer file.close();
+        file.writeAll(c_src) catch {
+            stderr.print("ft_lex: failed to write {s}\n", .{out_name}) catch {};
+            return 1;
+        };
+    }
+    return 0;
 }
