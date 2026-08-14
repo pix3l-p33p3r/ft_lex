@@ -13,5 +13,5 @@ test:
 	zig build test
 
 clean:
-	rm -rf zig-out .zig-cache ft_lex libl.a lex.yy.c scanner
+	rm -rf zig-out .zig-cache ft_lex libl.a lex.yy.c lex.yy.zig scanner
 	$(MAKE) -C libl clean
