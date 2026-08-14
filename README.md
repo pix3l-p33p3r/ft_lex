@@ -74,16 +74,16 @@ The previous tree tried to be flex-complete plus graph dumps, color cyclers, and
 
 ```mermaid
 flowchart LR
-  L["`.l` file"] --> P[lexfile.zig]
+  L[".l file"] --> P[lexfile.zig]
   P --> R[regex.zig]
   R --> N[nfa.zig]
   N --> D[dfa.zig]
-  D --> C{`-C`?}
-  C -->|yes| K[compress.zig]
-  C -->|no| E
-  K --> E{`-z`?}
-  E -->|no| CC["emit.zig \u2192 lex.yy.c"]
-  E -->|yes| ZZ["emit_zig.zig \u2192 lex.yy.zig"]
+  D --> Comp["-C flag"]
+  Comp -->|yes| K[compress.zig]
+  Comp -->|no| Zig["-z flag"]
+  K --> Zig
+  Zig -->|no| CC["emit.zig / lex.yy.c"]
+  Zig -->|yes| ZZ["emit_zig.zig / lex.yy.zig"]
   CC --> LL[libl.a]
 ```
 
