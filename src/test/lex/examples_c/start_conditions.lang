@@ -1,9 +1,0 @@
-always
-start_incl
-hello
-always
-exit
-start_excl
-world
-exit
-always

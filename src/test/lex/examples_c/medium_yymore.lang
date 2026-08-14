@@ -1,3 +1,0 @@
-Hello ${user}, your rank is ${level${tier}}.
-
-Nested templates ${VAR-${PATH}-${USER}}
