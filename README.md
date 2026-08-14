@@ -72,6 +72,21 @@ The previous tree tried to be flex-complete plus graph dumps, color cyclers, and
 
 `.l` → ERE → Thompson NFA → subset DFA → C (or Zig) tables + `yylex`
 
+```mermaid
+flowchart LR
+  L["`.l` file"] --> P[lexfile.zig]
+  P --> R[regex.zig]
+  R --> N[nfa.zig]
+  N --> D[dfa.zig]
+  D --> C{`-C`?}
+  C -->|yes| K[compress.zig]
+  C -->|no| E
+  K --> E{`-z`?}
+  E -->|no| CC["emit.zig \u2192 lex.yy.c"]
+  E -->|yes| ZZ["emit_zig.zig \u2192 lex.yy.zig"]
+  CC --> LL[libl.a]
+```
+
 | file | job |
 | --- | --- |
 | `src/lexfile.zig` | split definitions / rules / user code |
