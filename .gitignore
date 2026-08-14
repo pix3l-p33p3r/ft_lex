@@ -1,6 +1,7 @@
 zig-out/
 .zig-cache/
 lex.yy.c
+lex.yy.zig
 ft_lex
 libl.a
 libl/libl.o

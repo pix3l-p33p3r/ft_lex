@@ -1,8 +1,9 @@
 const std = @import("std");
 const lexfile = @import("lexfile.zig");
 const dfa_mod = @import("dfa.zig");
+const compress_mod = @import("compress.zig");
 
-pub fn generate(alloc: std.mem.Allocator, spec: *const lexfile.Spec, dfa: *const dfa_mod.Dfa) ![]u8 {
+pub fn generate(alloc: std.mem.Allocator, spec: *const lexfile.Spec, dfa: *const dfa_mod.Dfa, compress: bool) ![]u8 {
     var buf = std.ArrayList(u8).init(alloc);
     const w = buf.writer();
 
@@ -91,16 +92,50 @@ pub fn generate(alloc: std.mem.Allocator, spec: *const lexfile.Spec, dfa: *const
     if (dfa.n_rules == 0) try w.writeAll("0");
     try w.writeAll("};\n\n");
 
-    try w.writeAll("static const int yy_nxt[][256] = {\n");
-    for (dfa.states) |st| {
-        try w.writeAll("    {");
-        for (st.trans, 0..) |t, i| {
+    if (compress) {
+        const packed_tbl = try compress_mod.pack(alloc, dfa);
+        try w.writeAll("static const unsigned char yy_ec[256] = {");
+        for (packed_tbl.ec, 0..) |v, i| {
             if (i != 0) try w.writeAll(",");
-            try w.print("{d}", .{t});
+            try w.print("{d}", .{v});
         }
-        try w.writeAll("},\n");
+        try w.writeAll("};\n");
+        try w.writeAll("static const unsigned short yy_row[] = {");
+        for (packed_tbl.row, 0..) |v, i| {
+            if (i != 0) try w.writeAll(",");
+            try w.print("{d}", .{v});
+        }
+        try w.writeAll("};\n");
+        try w.print("static const short yy_nxt[][{d}] = {{\n", .{packed_tbl.nclass});
+        var r: usize = 0;
+        while (r < packed_tbl.nrows) : (r += 1) {
+            try w.writeAll("    {");
+            var c: usize = 0;
+            while (c < packed_tbl.nclass) : (c += 1) {
+                if (c != 0) try w.writeAll(",");
+                try w.print("{d}", .{packed_tbl.nxt[r * packed_tbl.nclass + c]});
+            }
+            try w.writeAll("},\n");
+        }
+        try w.writeAll("};\n\n");
+    } else {
+        try w.writeAll("static const int yy_nxt[][256] = {\n");
+        for (dfa.states) |st| {
+            try w.writeAll("    {");
+            for (st.trans, 0..) |t, i| {
+                if (i != 0) try w.writeAll(",");
+                try w.print("{d}", .{t});
+            }
+            try w.writeAll("},\n");
+        }
+        try w.writeAll("};\n\n");
     }
-    try w.writeAll("};\n\n");
+
+    if (compress) {
+        try w.writeAll("#define YY_NXT(s,c) yy_nxt[yy_row[(s)]][yy_ec[(unsigned char)(c)]]\n\n");
+    } else {
+        try w.writeAll("#define YY_NXT(s,c) yy_nxt[(s)][(c)]\n\n");
+    }
 
     try w.writeAll("static const int yy_naccept[] = {");
     for (dfa.states, 0..) |st, i| {
@@ -358,7 +393,7 @@ pub fn generate(alloc: std.mem.Allocator, spec: *const lexfile.Spec, dfa: *const
         \\            for (;;) {
         \\                c = yy_char_at(p);
         \\                if (c < 0) break;
-        \\                ns = yy_nxt[state][c];
+        \\                ns = YY_NXT(state, c);
         \\                if (ns < 0) break;
         \\                state = ns;
         \\                p += 1;

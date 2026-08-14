@@ -39,13 +39,22 @@ NEWLINE
 ## Options
 
 ```
-ft_lex [-t] [-n|-v] [file...]
+ft_lex [-t] [-n|-v] [-z] [-C] [file...]
 ```
 
-- `-t` write the scanner to stdout instead of `lex.yy.c`
+- `-t` write the scanner to stdout instead of `lex.yy.c` / `lex.yy.zig`
 - `-n` do not print statistics
 - `-v` print NFA/DFA statistics (stderr)
+- `-z` emit a Zig scanner (`lex.yy.zig`), not C
+- `-C` pack DFA tables (equivalence classes + unique rows). Default is uncompressed.
 - no file, or `-`, reads stdin; several files are concatenated
+
+```sh
+./zig-out/bin/ft_lex -z examples/scanner.l
+zig run lex.yy.zig < examples/scanner.in
+```
+
+On `examples/scanner.l`, `-t` is 26961 bytes and `-tC` is 9459 bytes (~2.8×).
 
 ## Tests
 

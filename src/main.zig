@@ -4,16 +4,19 @@ const lexfile = @import("lexfile.zig");
 const nfa_mod = @import("nfa.zig");
 const dfa_mod = @import("dfa.zig");
 const emit = @import("emit.zig");
+const emit_zig = @import("emit_zig.zig");
 
 const Options = struct {
     t: bool = false,
     n: bool = false,
     v: bool = false,
+    zig: bool = false,
+    compress: bool = false,
     files: []const []const u8 = &.{},
 };
 
 fn usage(w: anytype) !void {
-    try w.writeAll("Usage: ft_lex [-t] [-n|-v] [file...]\n");
+    try w.writeAll("Usage: ft_lex [-t] [-n|-v] [-z] [-C] [file...]\n");
 }
 
 fn parseOptions(alloc: std.mem.Allocator, args: []const []const u8) !Options {
@@ -33,6 +36,8 @@ fn parseOptions(alloc: std.mem.Allocator, args: []const []const u8) !Options {
                     't' => opt.t = true,
                     'n' => opt.n = true,
                     'v' => opt.v = true,
+                    'z' => opt.zig = true,
+                    'C' => opt.compress = true,
                     else => {
                         const stderr = std.io.getStdErr().writer();
                         stderr.print("ft_lex: unrecognized option -- {c}\n", .{ch}) catch {};
@@ -144,7 +149,11 @@ pub fn main() u8 {
         },
     };
 
-    const c_src = emit.generate(alloc, &spec, &dfa) catch {
+    const out_src = if (opt.zig)
+        emit_zig.generate(alloc, &spec, &dfa, opt.compress)
+    else
+        emit.generate(alloc, &spec, &dfa, opt.compress);
+    const c_src = out_src catch {
         stderr.writeAll("ft_lex: out of memory\n") catch {};
         return 1;
     };
@@ -162,13 +171,14 @@ pub fn main() u8 {
             return 1;
         };
     } else {
-        const file = std.fs.cwd().createFile("lex.yy.c", .{}) catch {
-            stderr.writeAll("ft_lex: cannot create lex.yy.c\n") catch {};
+        const out_name: []const u8 = if (opt.zig) "lex.yy.zig" else "lex.yy.c";
+        const file = std.fs.cwd().createFile(out_name, .{}) catch {
+            stderr.print("ft_lex: cannot create {s}\n", .{out_name}) catch {};
             return 1;
         };
         defer file.close();
         file.writeAll(c_src) catch {
-            stderr.writeAll("ft_lex: failed to write lex.yy.c\n") catch {};
+            stderr.print("ft_lex: failed to write {s}\n", .{out_name}) catch {};
             return 1;
         };
     }

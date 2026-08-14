@@ -92,4 +92,45 @@ echo "ok dash_t"
 WC=$(printf '%s\n' '2 3 16')
 run_case wc examples/wc.l examples/wc.in "$WC"
 
+# compressed C still matches the subject scanner
+rm -f lex.yy.c
+"$FT_LEX" -C examples/scanner.l || fail "scanner_C: ft_lex -C failed"
+cc -std=c99 -o "$TMP/scanner_C" lex.yy.c -L"$LIBDIR" -ll || fail "scanner_C: cc failed"
+got=$("$TMP/scanner_C" < examples/scanner.in)
+if [ "$got" != "$SUBJECT" ]; then
+    fail "scanner_C: output mismatch"
+fi
+echo "ok scanner_C"
+
+# -z: real Zig scanner on the subject input
+rm -f lex.yy.zig
+"$FT_LEX" -z examples/scanner.l || fail "scanner_z: ft_lex -z failed"
+test -f lex.yy.zig || fail "scanner_z: lex.yy.zig not written"
+grep -q "const std = @import" lex.yy.zig || fail "scanner_z: not a Zig file"
+grep -q "int yylex" lex.yy.zig && fail "scanner_z: looks like C"
+got=$(zig run lex.yy.zig < examples/scanner.in) || fail "scanner_z: zig run failed"
+if [ "$got" != "$SUBJECT" ]; then
+    echo "expected:" >&2
+    printf '%s\n' "$SUBJECT" >&2
+    echo "got:" >&2
+    printf '%s\n' "$got" >&2
+    fail "scanner_z: output mismatch"
+fi
+echo "ok scanner_z"
+
+# compression must shrink lex.yy.c by about 2x
+"$FT_LEX" -t examples/scanner.l > "$TMP/full.c"
+"$FT_LEX" -tC examples/scanner.l > "$TMP/comp.c"
+full=$(wc -c < "$TMP/full.c")
+comp=$(wc -c < "$TMP/comp.c")
+echo "compression sizes: uncompressed=$full compressed=$comp"
+if [ "$comp" -le 0 ] || [ "$full" -le 0 ]; then
+    fail "compression: empty output"
+fi
+# require at least 2x: uncompressed >= 2 * compressed
+if [ $((comp * 2)) -gt "$full" ]; then
+    fail "compression: expected >=2x ($full vs $comp)"
+fi
+echo "ok compression"
+
 echo "all checks passed"

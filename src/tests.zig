@@ -8,6 +8,7 @@ const dfa_mod = @import("dfa.zig");
 comptime {
     _ = @import("lexfile.zig");
     _ = @import("regex.zig");
+    _ = @import("compress.zig");
 }
 
 fn compileDfa(alloc: std.mem.Allocator, src: []const u8) !dfa_mod.Dfa {
